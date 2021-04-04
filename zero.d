@@ -1,18 +1,19 @@
 // ldc2 --output-s zero.d -of - -O3 -mcpu=native --boundscheck=off
 
-import std.stdint;
-import std.algorithm;
-import std.getopt;
-import std.socket;
-import std.stdio;
-import core.time;
-import std.regex;
 import core.stdc.errno;
-import std.format;
-import std.typecons;
-import std.exception;
+import core.time;
+import std.algorithm;
 import std.array;
 import std.conv;
+import std.exception;
+import std.format;
+import std.getopt;
+import std.random;
+import std.regex;
+import std.socket;
+import std.stdint;
+import std.stdio;
+import std.typecons;
 
 /**
  * アドレス
@@ -78,7 +79,7 @@ int rank(Address a)
 /**
  * 駒の色
  */
-enum Color : uint8_t
+enum Color : int8_t
 {
     BLACK = 0,  // 先手
     WHITE = 1,  // 後手
@@ -88,7 +89,7 @@ enum Color : uint8_t
 /**
  * 駒の種類
  */
-enum PieceType : uint8_t
+enum PieceType : int8_t
 {
     PAWN = 0, LANCE = 1, KNIGHT = 2, SILVER = 3, GOLD = 4, BISHOP = 5, ROOK = 6, KING = 7,
     PRO_PAWN = 8, PRO_LANCE = 9, PRO_KNIGHT = 10, PRO_SILVER = 11, HORSE = 12, DRAGON = 13, EMPTY = 14,
@@ -138,8 +139,9 @@ struct Piece
  */
 struct Position
 {
-    Piece[40] pieces; // 駒が40枚あるはず
-    Color sideToMove; // 手番
+    Piece[40] pieces;    // 駒が40枚あるはず
+    Color sideToMove;    // 手番
+    int16_t staticValue; // 評価値
 
     /**
      * 任意のアドレスにある駒を返す
@@ -227,6 +229,7 @@ Move parseMove(string s, ref Position pos)
 string toCsa(Move m, ref Position pos)
 {
     if (m == Move.TORYO) return "%TORYO";
+    if (m == Move.NULL)  return "Move.NULL";
 
     //                  歩,   香,   桂,   銀,   金,   角,   飛,   玉,   と, 成香, 成桂, 成銀,   馬,   龍,
     immutable CSA   = ["FU", "KY", "KE", "GI", "KI", "KA", "HI", "OU", "TO", "NY", "NK", "NG", "UM", "RY"];
@@ -255,6 +258,9 @@ string toCsa(Move m, ref Position pos)
  */
 Position doMove(Position pos, Move m)
 {
+    immutable T0 = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
+    immutable T1 = [+1, -1,  0];
+
     // posの中から持駒を探して返す
     ref Piece find(ref Position pos, PieceType t) {
         foreach(ref p; pos.pieces)  if (p.color == pos.sideToMove && p.type == t && p.address == -1) return p;
@@ -267,9 +273,13 @@ Position doMove(Position pos, Move m)
         } else {
             Piece* to = pos.lookAt(m.to);
             if (to != null) {
+                pos.staticValue -= T0[to.type] * T1[to.color];
+
                 to.type = to.type.unpromote;
                 to.color = pos.sideToMove;
                 to.address = -1;
+
+                pos.staticValue += T0[to.type] * T1[to.color];
             }
 
             Piece* from = pos.lookAt(m.from);
@@ -367,16 +377,12 @@ immutable RANK_MAX = [
     [8, 8, 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9],
 ];
 
-
-
 /**
  * 駒を取る手を生成する
  */
 int generateCaptureMoves(ref Position pos, Move[] outMoves)
 {
-    // if (p.piecesInHand[Color.BLACK][Type.KING] > 0 || p.piecesInHand[Color.WHITE][Type.KING] > 0) {
-    //     return 0;
-    // }
+    if (pos.pieces[0].address < 0 || pos.pieces[1].address < 0) return 0;
 
     bool[81] f_occupied = false;
     bool[81] e_occupied = false;
@@ -414,15 +420,13 @@ int generateCaptureMoves(ref Position pos, Move[] outMoves)
  */
 int generateMoves(ref Position pos, Move[] outMoves)
 {
-    // if (p.piecesInHand[Color.BLACK][Type.KING] > 0 || p.piecesInHand[Color.WHITE][Type.KING] > 0) {
-    //     return 0;
-    // }
+    if (pos.pieces[0].address < 0 || pos.pieces[1].address < 0) return 0;
 
     bool[10] pawned = false; // 0～9筋に味方の歩があるか
-    bool[81] occupied = false;
+    bool[81] occupied = false; // 駒があるか
     bool[7]  hand = false; //歩,香,桂,銀,金,角,飛が持駒にあるか
     foreach (ref p; pos.pieces) {
-        if (p.address >= 0 && p.type == PieceType.PAWN) pawned[p.address.file] = true;
+        if (p.address >= 0 && p.color == pos.sideToMove && p.type == PieceType.PAWN) pawned[p.address.file] = true;
         if (p.address >= 0) occupied[p.address] = true;
         if (p.address == -1 && p.color == pos.sideToMove) hand[p.type] = true;
     }
@@ -449,16 +453,15 @@ int generateMoves(ref Position pos, Move[] outMoves)
     // 持ち駒を打つ
     for (Address to = SQ11; to <= SQ99; to++) {
         if (occupied[to]) continue;
-        for (PieceType t = PieceType.ROOK; t >= (pawned[to.file] ? PieceType.LANCE : PieceType.PAWN); t--) { // 飛,角,金,銀,桂,香,歩
+        for (PieceType t = (pawned[to.file] ? PieceType.LANCE : PieceType.PAWN); t <= PieceType.ROOK ; t++) {
             if (hand[t] && to.rank >= RANK_MIN[pos.sideToMove][t] && RANK_MAX[pos.sideToMove][t] >= to.rank) {
-                outMoves[length++] = createMoveDrop(t, to);
+               outMoves[length++] = createMoveDrop(t, to);
             }
         }
     }
 
     return length;
 }
-
 
 bool isOverBound(Address from, Address to)
 {
@@ -615,20 +618,7 @@ string toKi2(ref Position pos)
 
 
 
-
-void search(ref Position pos)
-{
-
-
-}
-
-
-
-
-
-
 Socket SOCKET;
-bool USE_ENHANCED_CSA_PROTOCOL = false;
 
 
 /**
@@ -669,7 +659,9 @@ Captures!string readLineUntil(ref Socket s, string re)
     return m;
 }
 
-
+/**
+ * OSを起動してからのミリ秒を取る
+ */
 uint64_t get_milliseconds()
 {
     import core.sys.linux.time;
@@ -680,38 +672,33 @@ uint64_t get_milliseconds()
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-
 int main(string[] args)
 {
 
-
-    for(;;) {
-        writeln(get_milliseconds);
-    }
-
-    Position pos0 = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
-    writeln(pos0.toKi2());
+    // Position pos0 = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
+    // //Position pos0 = parseSfen("8l/1l+R2P3/p2pBG1pp/kps1p4/Nn1P2G2/P1P1P2PP/1PS6/1KSG3+r1/LN2+p3L w Sbgn3p 124");
+    // writeln(pos0.toKi2());
 
 
-    Move[100] moves;
-    int length = pos0.generateMoves(moves);
-    foreach (n; 0..length) writeln(toCsa(moves[n], pos0));
+    // Move m0 = pos0.ponder(get_milliseconds() + 10000);
+    // writeln(m0.toCsa(pos0));
 
-    Move move = createMovePromote(15, 11);
-    writeln(move.toCsa(pos0));
+    // // Move[100] moves;
+    // // int length = pos0.generateMoves(moves);
+    // // foreach (n; 0..length) writeln(toCsa(moves[n], pos0));
 
-    pos0 = pos0.doMove(move);
-    writeln(pos0.toKi2());
+    // // Move move = createMovePromote(15, 11);
+    // // writeln(move.toCsa(pos0));
 
-    return 1;
+    // // pos0 = pos0.doMove(move);
+    // //writeln(pos0.toKi2());
 
+    // return 1;
 
-
-
-
+    bool use_enhanced_csa_protocol = false;
     uint16_t port = 4081;
     try {
-        getopt(args, "e", &USE_ENHANCED_CSA_PROTOCOL, "p", &port);
+        getopt(args, "e", &use_enhanced_csa_protocol, "p", &port);
         if (args.length < 4) throw new Exception("");
     } catch (Exception e) {
         writeln("usage: tenuki [-e] [-p port] hostname username password");
@@ -745,28 +732,25 @@ int main(string[] args)
     if (!SOCKET.readLine().matchFirst("^START:")) return 1;
 
 
-
-
     Position pos = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
     writeln(pos.toKi2());
 
     if (us == Color.BLACK) {
         timeLeft += timeIncrement;
-        search(pos); // search & send
+        Move move = pos.ponder(get_milliseconds() + 900);
+        SOCKET.writeLine(move.toCsa(pos));
     }
 
     for (;;) {
         const string line = SOCKET.readLine();
         if (line.matchFirst(r"^(\+|-)\d{4}\D{2},T\d+$")) {
-
             if (pos.sideToMove == us) timeLeft -= to!int(line.matchFirst(r",T(\d+)")[1]);
-
             pos = pos.doMove(parseMove(line, pos));
             writeln(pos.toKi2());
-            //writeln(search.REMAIN_SECONDS);
             if (pos.sideToMove == us) {
                 timeLeft += timeIncrement;
-                search(pos); // search & send
+                Move move = pos.ponder(get_milliseconds() + 900);
+                SOCKET.writeLine(move.toCsa(pos));
             }
         } else if (line.matchFirst(r"^%TORYO(,T\d+)?$") || line.matchFirst(r"^%KACHI(,T\d+)?$")) {
             // do nothing
@@ -799,23 +783,25 @@ Move ponder(ref Position pos, uint64_t time_end)
     for (int depth = 1; get_milliseconds() < time_end; depth++) {
         Move move = search0(pos, depth, time_end);
         if (move != Move.NULL) bestMove = move;
+        writefln("%d: %s", depth, move.toCsa(pos));
     }
+    writeln(COUNT);
     return bestMove;
 }
 
 
-
 /**
- * ルート局面用のsearch
+ * ルート局面用の通常探索
  */
 Move search0(Position pos, int depth, uint64_t time_end)
 {
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return Move.NULL;
+    randomShuffle(moves[0..length]);
 
-    int alpha = short.min;
-    int beta = short.max;
+    int alpha = -1000000;
+    int beta = +1000000;
     Move bestMove = Move.NULL;
     foreach (Move move; moves[0..length]) {
         int value = -search(pos.doMove(move), depth - 1, -beta, -alpha, time_end);
@@ -823,9 +809,14 @@ Move search0(Position pos, int depth, uint64_t time_end)
             alpha = value;
             bestMove = move;
         }
+        if (beta <= alpha) break;
     }
+    if (get_milliseconds() >= time_end) return Move.NULL; // 時間切れ
+    if (alpha < -15000) return Move.TORYO;
     return bestMove;
 }
+
+int COUNT;
 
 /**
  * 通常探索
@@ -835,12 +826,13 @@ int search(Position pos, int depth, int alpha, int beta, uint64_t time_end)
     assert(alpha < beta);
 
     if (get_milliseconds() >= time_end) return beta; // 時間切れ
-    if (pos.inUchifuzume) return 15000; // 打ち歩詰めされていれば勝ち
+    COUNT++;
+    //if (pos.inUchifuzume) return 15000; // 打ち歩詰めされていれば勝ち
     if (depth <= 0) return qsearch(pos, depth + 4, alpha, beta, time_end); // 静止探索
 
     Move[593] moves;
     int length = pos.generateMoves(moves);
-    if (length == 0) return pos.staticValue;
+    if (length == 0) return eval(pos);
     foreach (Move move; moves[0..length]) {
         alpha = max(alpha, -search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
         if (beta <= alpha) return beta;
@@ -856,16 +848,39 @@ int qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
     assert(alpha < beta);
 
     if (get_milliseconds() >= time_end) return beta; // 時間切れ
-    if (depth <= 0) return pos.staticValue;
+    if (depth <= 0) return eval(pos);
 
-    alpha = max(alpha, pos.staticValue);
+    alpha = max(alpha, eval(pos));
     if (beta <= alpha) return beta;
 
     Move[593] moves;
-    int length = pos.legalCaptureMoves(moves);
+    int length = pos.generateCaptureMoves(moves);
     foreach (Move move; moves[0..length]) {
         alpha = max(alpha, -qsearch(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
         if (beta <= alpha) return beta;
     }
     return alpha;
+}
+
+/**
+ * 手番のある側から見た評価値を返す。
+ */
+int eval(ref Position pos)
+{
+    //              歩,   香,   桂,   銀,   金,   角,   飛,     王,   と, 成香, 成桂, 成銀,   馬,    龍,
+    immutable T0 = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
+    immutable T1 = [+1, -1,  0];
+
+    int sum = 0;
+    foreach (ref p; pos.pieces) sum += T0[p.type] * T1[p.color];
+    return sum * T1[pos.sideToMove];
+}
+
+/**
+ * 手番のある側から見た評価値を返す。
+ */
+int eval2(ref Position pos)
+{
+    immutable T1 = [+1, -1,  0];
+    return pos.staticValue * T1[pos.sideToMove];
 }
