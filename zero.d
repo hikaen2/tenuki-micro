@@ -1,5 +1,3 @@
-// ldc2 --output-s zero.d -of - -O3 -mcpu=native --boundscheck=off
-
 import core.stdc.errno;
 import core.time;
 import std.algorithm;
@@ -30,7 +28,7 @@ import std.typecons;
  * 79 70 61 52 43 34 25 16  7|八
  * 80 71 62 53 44 35 26 17  8|九
  *
- * -1: 持駒
+ * -1: 持ち駒
  * -2: 駒箱
  */
 alias Address = int8_t;
@@ -83,7 +81,6 @@ enum Color : int8_t
 {
     BLACK = 0,  // 先手
     WHITE = 1,  // 後手
-    NONE  = 2,  // なし
 }
 
 /**
@@ -92,7 +89,7 @@ enum Color : int8_t
 enum PieceType : int8_t
 {
     PAWN = 0, LANCE = 1, KNIGHT = 2, SILVER = 3, GOLD = 4, BISHOP = 5, ROOK = 6, KING = 7,
-    PRO_PAWN = 8, PRO_LANCE = 9, PRO_KNIGHT = 10, PRO_SILVER = 11, HORSE = 12, DRAGON = 13, EMPTY = 14,
+    PRO_PAWN = 8, PRO_LANCE = 9, PRO_KNIGHT = 10, PRO_SILVER = 11, HORSE = 12, DRAGON = 13,
 }
 
 /**
@@ -101,7 +98,7 @@ enum PieceType : int8_t
 PieceType unpromote(PieceType t)
 {
     immutable T = [PieceType.PAWN, PieceType.LANCE, PieceType.KNIGHT, PieceType.SILVER, PieceType.GOLD, PieceType.BISHOP, PieceType.ROOK, PieceType.KING,
-                   PieceType.PAWN, PieceType.LANCE, PieceType.KNIGHT, PieceType.SILVER, PieceType.BISHOP, PieceType.ROOK, PieceType.EMPTY];
+                   PieceType.PAWN, PieceType.LANCE, PieceType.KNIGHT, PieceType.SILVER, PieceType.BISHOP, PieceType.ROOK];
     return T[t];
 }
 
@@ -111,7 +108,7 @@ PieceType unpromote(PieceType t)
 PieceType promote(PieceType t)
 {
     immutable T = [PieceType.PRO_PAWN, PieceType.PRO_LANCE, PieceType.PRO_KNIGHT, PieceType.PRO_SILVER, PieceType.GOLD, PieceType.HORSE, PieceType.DRAGON, PieceType.KING,
-                   PieceType.PRO_PAWN, PieceType.PRO_LANCE, PieceType.PRO_KNIGHT, PieceType.PRO_SILVER, PieceType.HORSE, PieceType.DRAGON, PieceType.EMPTY];
+                   PieceType.PRO_PAWN, PieceType.PRO_LANCE, PieceType.PRO_KNIGHT, PieceType.PRO_SILVER, PieceType.HORSE, PieceType.DRAGON];
     return T[t];
 }
 
@@ -120,12 +117,13 @@ PieceType promote(PieceType t)
  */
 bool isPromotable(PieceType t)
 {
-    immutable T = [true, true, true, true, false, true, true, false, false, false, false, false, false, false, false];
+    //             歩,   香,   桂,   銀,   金,    角,   飛,   玉,    と,    成香,  成桂,  成銀,  馬,    龍
+    immutable T = [true, true, true, true, false, true, true, false, false, false, false, false, false, false];
     return T[t];
 }
 
 /**
- * 駒（色と型とアドレスを持つ）
+ * 駒（色と種類とアドレスを持つ）
  */
 struct Piece
 {
@@ -155,6 +153,7 @@ struct Position
 
 /**
  * 指し手
+ *
  * 1xxxxxxx xxxxxxxx promote
  * x1xxxxxx xxxxxxxx drop
  * xx111111 1xxxxxxx from
@@ -167,13 +166,13 @@ struct Move
 
     uint16_t i;
     PieceType type() const { return cast(PieceType)((i >> 7) & 0b01111111); }
-    Address from() const { return cast(Address)((i >> 7) & 0b01111111); }
-    Address to() const { return cast(Address)(i & 0b01111111); }
+    Address from()   const { return cast(Address)((i >> 7) & 0b01111111); }
+    Address to()     const { return cast(Address)(i & 0b01111111); }
     bool isPromote() const { return (i & 0b1000000000000000) != 0; }
-    bool isDrop() const { return (i & 0b0100000000000000) != 0; }
+    bool isDrop()    const { return (i & 0b0100000000000000) != 0; }
 }
 
-// Moveを返す関数
+// Moveを作る関数
 Move createMove(Address from, Address to)        { return Move(cast(uint16_t)(from << 7 | to)); }
 Move createMovePromote(Address from, Address to) { return Move(cast(uint16_t)(from << 7 | to | 0b1000000000000000)); }
 Move createMoveDrop(PieceType t, Address to)     { return Move(cast(uint16_t)(t << 7 | to | 0b0100000000000000)); }
@@ -224,7 +223,7 @@ Move parseMove(string s, ref Position pos)
 }
 
 /**
- * MoveのCSA形式の文字列を返す
+ * 局面posにおける指し手mのCSA形式の文字列を返す。例："+7868FU"
  */
 string toCsa(Move m, ref Position pos)
 {
@@ -254,45 +253,44 @@ string toCsa(Move m, ref Position pos)
 }
 
 /**
- * do_move
+ * 局面にMoveを適用した新しい局面を作って返す（元の局面は変更しない）。
  */
 Position doMove(Position pos, Move m)
 {
-    immutable T0 = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
-    immutable T1 = [+1, -1,  0];
+    immutable SCORE = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
 
-    // posの中から持駒を探して返す
+    // posの中から持ち駒を探して返す
     ref Piece find(ref Position pos, PieceType t) {
-        foreach(ref p; pos.pieces)  if (p.color == pos.sideToMove && p.type == t && p.address == -1) return p;
+        foreach(ref p; pos.pieces) if (p.color == pos.sideToMove && p.type == t && p.address == -1) return p;
         throw new Exception(format("not found %s.", t));
     }
 
     if (m != Move.TORYO) {
         if (m.isDrop) {
-            find(pos, m.type).address = m.to;
+            find(pos, m.type).address = m.to; // 持ち駒を打つ
         } else {
-            Piece* to = pos.lookAt(m.to);
+            Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
             if (to != null) {
-                pos.staticValue -= T0[to.type] * T1[to.color];
+                pos.staticValue -= (to.color == Color.BLACK ? SCORE[to.type] : -SCORE[to.type]);
 
-                to.type = to.type.unpromote;
-                to.color = pos.sideToMove;
-                to.address = -1;
+                to.color = pos.sideToMove; // 移動先の駒を自分のものにする
+                to.type = to.type.unpromote; // 成っているかもしれないのを戻す
+                to.address = -1; // 持ち駒にする
 
-                pos.staticValue += T0[to.type] * T1[to.color];
+                pos.staticValue += (to.color == Color.BLACK ? SCORE[to.type] : -SCORE[to.type]);
             }
 
-            Piece* from = pos.lookAt(m.from);
-            from.address = m.to;
-            if (m.isPromote) from.type = from.type.promote;
+            Piece* from = pos.lookAt(m.from); // 移動元の駒について
+            from.address = m.to; // 移動先に移動させる
+            if (m.isPromote) from.type = from.type.promote; // 成るなら成る
         }
     }
-    pos.sideToMove ^= 1;
+    pos.sideToMove ^= 1; // 手番を変える
     return pos;
 }
 
 /**
- * 駒が移動できるところ。NULL終端
+ * 駒の移動できる向き。NULL終端
  */
 immutable Direction[9][14][2] DIRECTIONS = [
     [
@@ -328,7 +326,6 @@ immutable Direction[9][14][2] DIRECTIONS = [
         [Direction.FS,   Direction.FW,   Direction.FE,   Direction.FN,   Direction.SW,   Direction.SE,   Direction.NW,   Direction.NE,   Direction.NULL], // 27: W_DRAGON
     ],
 ];
-
 
 /**
  * Direction
@@ -369,7 +366,6 @@ immutable RANK_MIN = [
     [2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ];
-
 
 immutable RANK_MAX = [
 //  歩,香,桂,銀,金,角,飛,王,と,杏,圭,全,馬,龍
@@ -474,11 +470,6 @@ bool canPromote(ref Piece p, Address from, Address to)
 }
 
 
-
-
-
-
-
 /**
  * SFENをパースして局面を作って返す
  *
@@ -487,7 +478,6 @@ bool canPromote(ref Piece p, Address from, Address to)
 Position parseSfen(string sfen)
 {
     immutable COLOR_AND_TYPE = [
-        "1":  tuple(Color.NONE,  PieceType.EMPTY),
         "P":  tuple(Color.BLACK, PieceType.PAWN),
         "L":  tuple(Color.BLACK, PieceType.LANCE),
         "N":  tuple(Color.BLACK, PieceType.KNIGHT),
@@ -555,8 +545,11 @@ Position parseSfen(string sfen)
     auto m = boardState.matchAll(r"\+?.");
     for (int rank = 0; rank <= 8; rank++) {
         for (int file = 8; file >= 0; file--) {
-            auto t = COLOR_AND_TYPE[m.front.hit];
-            if (t[1] != PieceType.EMPTY)  find(pos, t[0], unpromote(t[1])) = Piece(t[0], t[1], cast(Address)(file * 9 + rank));
+            string s = m.front.hit;
+            if (s != "1") {
+                auto t = COLOR_AND_TYPE[s];
+                find(pos, t[0], unpromote(t[1])) = Piece(t[0], t[1], cast(Address)(file * 9 + rank));
+            }
             m.popFront();
         }
     }
@@ -586,9 +579,7 @@ string toKi2(ref Position pos)
     string hand(ref Position pos, Color color)
     {
         int[7] num; // 0:歩 1:香 2:桂 3:銀 4:金 5:角 6:飛
-        foreach (Piece p; pos.pieces) {
-            if (p.address == -1 && p.color == color) num[p.type] += 1;
-        }
+        foreach (Piece p; pos.pieces) if (p.address == -1 && p.color == color) num[p.type] += 1;
         string s;
         foreach_reverse (i, n; num) {
             if (n > 0) s ~= TYPE_STR[i];
@@ -616,8 +607,6 @@ string toKi2(ref Position pos)
 }
 
 
-
-
 Socket SOCKET;
 
 
@@ -641,7 +630,7 @@ string readLine(ref Socket s)
 }
 
 /**
- * ソケットに文字列を書き込む
+ * ソケットに文字列を書き込む（改行を付ける）
  */
 void writeLine(ref Socket s, string str)
 {
@@ -660,21 +649,20 @@ Captures!string readLineUntil(ref Socket s, string re)
 }
 
 /**
- * OSを起動してからのミリ秒を取る
+ * OSが起動してからのミリ秒を取る
  */
 uint64_t get_milliseconds()
 {
     import core.sys.linux.time;
     timespec ts;
-    //clock_gettime(CLOCK_REALTIME, &ts);
-    clock_gettime(CLOCK_REALTIME_COARSE, &ts);
+    //clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
     assert(ts.tv_nsec / 1000000 < 1000);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 int main(string[] args)
 {
-
     // Position pos0 = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
     // //Position pos0 = parseSfen("8l/1l+R2P3/p2pBG1pp/kps1p4/Nn1P2G2/P1P1P2PP/1PS6/1KSG3+r1/LN2+p3L w Sbgn3p 124");
     // writeln(pos0.toKi2());
@@ -753,14 +741,14 @@ int main(string[] args)
                 SOCKET.writeLine(move.toCsa(pos));
             }
         } else if (line.matchFirst(r"^%TORYO(,T\d+)?$") || line.matchFirst(r"^%KACHI(,T\d+)?$")) {
-            // do nothing
+            // 何もしない（このあと#WINとか#LOSEが来るはず）
         } else if (line.among("#ILLEGAL_ACTION", "#ILLEGAL_MOVE", "#JISHOGI", "#MAX_MOVES", "#OUTE_SENNICHITE", "#RESIGN", "#SENNICHITE", "#TIME_UP")) {
-            // do nothing
+            // 何もしない（このあと#WINとか#LOSEが来るはず）
         } else if (line.among("#WIN", "#LOSE", "#DRAW", "#CENSORED", "#CHUDAN")) {
             SOCKET.writeLine("LOGOUT");
-            return 0;
+            return 0; // 終了
         } else if (line == "") {
-            // do nothing
+            // 何もしない（空行が送られてくることもあるらしい）
         } else {
             writefln("unknown command: '%s'", line);
         }
