@@ -37,7 +37,7 @@ enum Address SQ11 = 0;
 enum Address SQ99 = 80;
 
 /**
- * アドレスの筋（1〜9）を返す。
+ * アドレスから筋（1〜9）を返す。
  */
 int file(Address a)
 {
@@ -56,7 +56,7 @@ int file(Address a)
 }
 
 /**
- * アドレスの段（1〜9）を返す。
+ * アドレスから段（1〜9）を返す。
  */
 int rank(Address a)
 {
@@ -265,7 +265,7 @@ Position doMove(Position pos, Move m)
         throw new Exception(format("not found %s.", t));
     }
 
-    if (m != Move.TORYO) {
+    if (m != Move.TORYO && m != Move.NULL) {
         if (m.isDrop) {
             find(pos, m.type).address = m.to; // 持ち駒を打つ
         } else {
@@ -290,7 +290,7 @@ Position doMove(Position pos, Move m)
 }
 
 /**
- * 駒の移動できる向き。NULL終端
+ * 駒の移動できる方向。NULL終端
  */
 immutable Direction[9][14][2] DIRECTIONS = [
     [
@@ -475,7 +475,7 @@ bool canPromote(ref Piece p, Address from, Address to)
  *
  * 例: 8l/1l+R2P3/p2pBG1pp/kps1p4/Nn1P2G2/P1P1P2PP/1PS6/1KSG3+r1/LN2+p3L w Sbgn3p 124
  */
-Position parseSfen(string sfen)
+Position parsePosition(string sfen)
 {
     immutable COLOR_AND_TYPE = [
         "P":  tuple(Color.BLACK, PieceType.PAWN),
@@ -511,7 +511,7 @@ Position parseSfen(string sfen)
     ref Piece find(ref Position pos, Color c, PieceType t) {
         foreach(ref p; pos.pieces)  if (p.color == c && p.type == t && p.address == -2) return p;
         foreach(ref p; pos.pieces)  if (p.type == t && p.address == -2)                 return p;
-        throw new Exception(format("too many %s in '%s'.", t, sfen));
+        throw new Exception(format("parsePosition: too many %s in '%s'.", t, sfen));
     }
 
     Position pos;
@@ -528,25 +528,20 @@ Position parseSfen(string sfen)
         assert(i == 40);
     }
 
-    string[] a = sfen.split(" ");
-    string boardState = a[0];
-    string sideToMove = a[1];
-    string piecesInHand = a[2];
-
-    // 手番
-    enforce(sideToMove == "b" || sideToMove == "w", format("invalid side to move: '%s'.", sideToMove));
-    pos.sideToMove = sideToMove == "b" ? Color.BLACK : Color.WHITE;
+    string[] a = sfen.split(" "); // SFENをスペースで分割する
+    string boardState = a[0]; // 盤面
+    string sideToMove = a[1]; // 手番
+    string piecesInHand = a[2]; // 持ち駒
 
     // 盤面
-    for (int i = 9; i >= 2; i--) {
-        boardState = boardState.replace(to!string(i), "1".replicate(i)); // 2～9を1に開いておく
-    }
+    for (int i = 9; i >= 2; i--) boardState = boardState.replace(to!string(i), "1".replicate(i)); // 2～9を1に開いておく
     boardState = boardState.replace("/", "");
     auto m = boardState.matchAll(r"\+?.");
     for (int rank = 0; rank <= 8; rank++) {
         for (int file = 8; file >= 0; file--) {
             string s = m.front.hit;
             if (s != "1") {
+                enforce(s in COLOR_AND_TYPE, format("parsePosition: invalid piece '%s' in board state '%s'.", s, boardState)); // COLOR_AND_TYPEになければエラー
                 auto t = COLOR_AND_TYPE[s];
                 find(pos, t[0], unpromote(t[1])) = Piece(t[0], t[1], cast(Address)(file * 9 + rank));
             }
@@ -554,11 +549,16 @@ Position parseSfen(string sfen)
         }
     }
 
+    // 手番
+    enforce(sideToMove == "b" || sideToMove == "w", format("parsePosition: invalid side to move: '%s'.", sideToMove)); // 'b'か'w'でなければエラー
+    pos.sideToMove = sideToMove == "b" ? Color.BLACK : Color.WHITE;
+
     // 持ち駒
     if (piecesInHand != "-") {
         // 例：S, 4P, b, 3n, p, 18P
         foreach (c; piecesInHand.matchAll(r"(\d*)(\D)")) {
             int n = c[1] == "" ? 1 : to!int(c[1]);
+            enforce(c[2] in COLOR_AND_TYPE, format("parsePosition: invalid piece '%s' in pieces in hand '%s'.", [2], piecesInHand)); // COLOR_AND_TYPEになければエラー
             auto t = COLOR_AND_TYPE[c[2]];
             foreach (_; 0..n)  find(pos, t[0], t[1]) = Piece(t[0], t[1], -1); // 持ち駒はアドレス:-1にしておく
         }
@@ -607,9 +607,6 @@ string toKi2(ref Position pos)
 }
 
 
-Socket SOCKET;
-
-
 /**
  * ソケットから１行読み込む
  */
@@ -625,7 +622,7 @@ string readLine(ref Socket s)
         if (len == 0) throw new Exception("connection lost");
         line ~= c;
     }
-    writefln("<\"%s\\n\"", line);
+    writefln("<\"%s\\n\"", line); // とりあえず標準出力に出す
     return line;
 }
 
@@ -635,7 +632,7 @@ string readLine(ref Socket s)
 void writeLine(ref Socket s, string str)
 {
     s.send(str ~ "\n");
-    writefln(">\"%s\\n\"", str);
+    writefln(">\"%s\\n\"", str); // とりあえず標準出力に出す
 }
 
 /**
@@ -651,9 +648,9 @@ Captures!string readLineUntil(ref Socket s, string re)
 /**
  * OSが起動してからのミリ秒を取る
  */
-uint64_t get_milliseconds()
+uint64_t get_monotonic_ms()
 {
-    import core.sys.linux.time;
+    import core.sys.linux.time; // Linux専用
     timespec ts;
     //clock_gettime(CLOCK_MONOTONIC, &ts);
     clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
@@ -661,36 +658,42 @@ uint64_t get_milliseconds()
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+
+void bench()
+{
+    Position pos0 = parsePosition("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1"); // 指し手生成祭り
+
+    //Position pos0 = parsePosition("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
+    //Position pos0 = parsePosition("8l/1l+R2P3/p2pBG1pp/kps1p4/Nn1P2G2/P1P1P2PP/1PS6/1KSG3+r1/LN2+p3L w Sbgn3p 124");
+    writeln(pos0.toKi2());
+
+
+    Move m0 = pos0.search(10000);
+    writeln(m0.toCsa(pos0));
+
+    // Move[100] moves;
+    // int length = pos0.generateMoves(moves);
+    // foreach (n; 0..length) writeln(toCsa(moves[n], pos0));
+
+    // Move move = createMovePromote(15, 11);
+    // writeln(move.toCsa(pos0));
+
+    // pos0 = pos0.doMove(move);
+    //writeln(pos0.toKi2());
+    writeln(COUNT / 1000);
+}
+
 int main(string[] args)
 {
-    // Position pos0 = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
-    // //Position pos0 = parseSfen("8l/1l+R2P3/p2pBG1pp/kps1p4/Nn1P2G2/P1P1P2PP/1PS6/1KSG3+r1/LN2+p3L w Sbgn3p 124");
-    // writeln(pos0.toKi2());
-
-
-    // Move m0 = pos0.ponder(get_milliseconds() + 10000);
-    // writeln(m0.toCsa(pos0));
-
-    // // Move[100] moves;
-    // // int length = pos0.generateMoves(moves);
-    // // foreach (n; 0..length) writeln(toCsa(moves[n], pos0));
-
-    // // Move move = createMovePromote(15, 11);
-    // // writeln(move.toCsa(pos0));
-
-    // // pos0 = pos0.doMove(move);
-    // //writeln(pos0.toKi2());
-
+    // bench();
     // return 1;
 
-    bool use_enhanced_csa_protocol = false;
     uint16_t port = 4081;
     try {
-        getopt(args, "e", &use_enhanced_csa_protocol, "p", &port);
+        getopt(args, "p", &port);
         if (args.length < 4) throw new Exception("");
     } catch (Exception e) {
-        writeln("usage: tenuki [-e] [-p port] hostname username password");
-        writeln("  -e  send enhanced CSA protocol");
+        writeln("usage: zero [-p port] hostname username password");
         writeln("  -p  default: 4081");
         return 1;
     }
@@ -699,53 +702,57 @@ int main(string[] args)
     const string password = args[3];
 
     stdout.writefln("Connecting to %s port %s.", hostname, port);
-    SOCKET = new TcpSocket(new InternetAddress(hostname, port));
-    scope(exit) SOCKET.close();
-    SOCKET.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3600));
+    Socket socket = new TcpSocket(new InternetAddress(hostname, port)); // ソケットを開く
+    scope(exit) socket.close();
+    socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3600)); // ソケットのタイムアウトを設定しておく（とりあえず1時間）
 
-    SOCKET.writeLine(format("LOGIN %s %s", username, password));
-    if (SOCKET.readLine() == "LOGIN:incorrect") return 1;
+    socket.writeLine(format("LOGIN %s %s", username, password));
+    if (socket.readLine() == "LOGIN:incorrect") return 1;
 
-    string[string] gameSummary;
-    for (string line = SOCKET.readLine(); line != "END Game_Summary"; line = SOCKET.readLine()) {
+    string[string] gameSummary; // BEGIN Game_Summary 〜 END Game_Summaryの中身を連想配列に入れておく。gameSummary["Your_Turn"]みたいにして取れる。
+    for (string line = socket.readLine(); line != "END Game_Summary"; line = socket.readLine()) {
         auto m = line.matchFirst(r"^([^:]+):(.+)$");
         if (!m.empty) gameSummary[m[1]] = m[2];
     }
 
-    const Color us = (gameSummary["Your_Turn"] == "+" ? Color.BLACK : Color.WHITE);
+    const Color us = (gameSummary["Your_Turn"] == "+" ? Color.BLACK : Color.WHITE); // 自分の手番
     int timeLeft = to!int(gameSummary["Total_Time"]); // 持ち時間
     const int timeIncrement = to!int(gameSummary["Increment"]); // フィッシャー
 
-    SOCKET.writeLine("AGREE");
-    if (!SOCKET.readLine().matchFirst("^START:")) return 1;
+    socket.writeLine("AGREE");
+    if (!socket.readLine().matchFirst("^START:")) return 1; // 相手がREJECTした場合はここで終わる
 
-
-    Position pos = parseSfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
+    // ここから対局開始
+    Position pos = parsePosition("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
     writeln(pos.toKi2());
 
-    if (us == Color.BLACK) {
+    uint64_t t;
+    if (us == Color.BLACK) { // 先手番だったらまず指す
         timeLeft += timeIncrement;
-        Move move = pos.ponder(get_milliseconds() + 900);
-        SOCKET.writeLine(move.toCsa(pos));
+        Move move = pos.search(2900);
+        t = get_monotonic_ms();
+        socket.writeLine(move.toCsa(pos));
     }
 
     for (;;) {
-        const string line = SOCKET.readLine();
-        if (line.matchFirst(r"^(\+|-)\d{4}\D{2},T\d+$")) {
-            if (pos.sideToMove == us) timeLeft -= to!int(line.matchFirst(r",T(\d+)")[1]);
-            pos = pos.doMove(parseMove(line, pos));
+        const string line = socket.readLine(); // ソケットから1行読む
+        if (line.matchFirst(r"^(\+|-)\d{4}\D{2},T\d+$")) { // （自分か相手の）指し手が来た
+            if (pos.sideToMove == us) writefln("t:%d [ms]", get_monotonic_ms() - t);
+            if (pos.sideToMove == us) timeLeft -= to!int(line.matchFirst(r",T(\d+)")[1]); // 自分の指し手だったら使った時間を引く
+            pos = pos.doMove(parseMove(line, pos)); // 局面に指し手を適用する（手番が変わる）
             writeln(pos.toKi2());
-            if (pos.sideToMove == us) {
+            if (pos.sideToMove == us) { // 自分の手番になったら指す
                 timeLeft += timeIncrement;
-                Move move = pos.ponder(get_milliseconds() + 900);
-                SOCKET.writeLine(move.toCsa(pos));
+                Move move = pos.search(2900);
+                t = get_monotonic_ms();
+                socket.writeLine(move.toCsa(pos));
             }
         } else if (line.matchFirst(r"^%TORYO(,T\d+)?$") || line.matchFirst(r"^%KACHI(,T\d+)?$")) {
             // 何もしない（このあと#WINとか#LOSEが来るはず）
         } else if (line.among("#ILLEGAL_ACTION", "#ILLEGAL_MOVE", "#JISHOGI", "#MAX_MOVES", "#OUTE_SENNICHITE", "#RESIGN", "#SENNICHITE", "#TIME_UP")) {
             // 何もしない（このあと#WINとか#LOSEが来るはず）
         } else if (line.among("#WIN", "#LOSE", "#DRAW", "#CENSORED", "#CHUDAN")) {
-            SOCKET.writeLine("LOGOUT");
+            socket.writeLine("LOGOUT");
             return 0; // 終了
         } else if (line == "") {
             // 何もしない（空行が送られてくることもあるらしい）
@@ -758,8 +765,10 @@ int main(string[] args)
 }
 
 
-
-Move ponder(ref Position pos, uint64_t time_end)
+/**
+ * 任意のミリ秒間，局面を探索して指し手を返す。どこからでも呼べる。
+ */
+Move search(ref Position pos, uint64_t time_ms)
 {
     // if (pos.inMate()) {
     //     outPv[0] = Move.TORYO;
@@ -767,39 +776,38 @@ Move ponder(ref Position pos, uint64_t time_end)
     //     return -15000;
     // }
 
-    Move bestMove = Move.NULL;
-    for (int depth = 1; get_milliseconds() < time_end; depth++) {
-        Move move = search0(pos, depth, time_end);
-        if (move != Move.NULL) bestMove = move;
+    uint64_t time_end = get_monotonic_ms() + time_ms;
+    Move bestMove = Move.TORYO; // 初期値を投了にしておく（合法手がなければ投了になる）
+    for (int depth = 1; get_monotonic_ms() < time_end; depth++) {
+        Move move = _search0(pos, depth, time_end);
+        if (move != Move.NULL && move != Move.TORYO) bestMove = move;
         writefln("%d: %s", depth, move.toCsa(pos));
     }
-    writeln(COUNT);
     return bestMove;
 }
 
-
 /**
- * ルート局面用の通常探索
+ * ルート局面用の通常探索。その局面での指し手を返す（簡単のため評価値は返さない）。searchから呼ばれる。
  */
-Move search0(Position pos, int depth, uint64_t time_end)
+Move _search0(Position pos, int depth, uint64_t time_end)
 {
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return Move.NULL;
-    randomShuffle(moves[0..length]);
+    randomShuffle(moves[0..length]); // 指し手をシャッフルする
 
     int alpha = -1000000;
     int beta = +1000000;
     Move bestMove = Move.NULL;
     foreach (Move move; moves[0..length]) {
-        int value = -search(pos.doMove(move), depth - 1, -beta, -alpha, time_end);
+        int value = - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end);
         if (alpha < value) {
             alpha = value;
             bestMove = move;
         }
         if (beta <= alpha) break;
     }
-    if (get_milliseconds() >= time_end) return Move.NULL; // 時間切れ
+    if (get_monotonic_ms() >= time_end) return Move.NULL; // 時間切れ
     if (alpha < -15000) return Move.TORYO;
     return bestMove;
 }
@@ -807,35 +815,38 @@ Move search0(Position pos, int depth, uint64_t time_end)
 int COUNT;
 
 /**
- * 通常探索
+ * 通常探索。その局面の（手番のある側から見た）評価値を返す。_search0から呼ばれる。
  */
-int search(Position pos, int depth, int alpha, int beta, uint64_t time_end)
+int _search(Position pos, int depth, int alpha, int beta, uint64_t time_end, bool doNullMove = true)
 {
     assert(alpha < beta);
 
-    if (get_milliseconds() >= time_end) return beta; // 時間切れ
+    if (get_monotonic_ms() >= time_end) return beta; // 時間切れ
     COUNT++;
     //if (pos.inUchifuzume) return 15000; // 打ち歩詰めされていれば勝ち
-    if (depth <= 0) return qsearch(pos, depth + 4, alpha, beta, time_end); // 静止探索
+    if (depth <= 0) return _qsearch(pos, depth + 4, alpha, beta, time_end); // 静止探索
+
+    if (doNullMove && beta <= - _search(pos.doMove(Move.NULL), depth - 2, -beta, -beta + 1, time_end, false)) return beta;
 
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return eval(pos);
     foreach (Move move; moves[0..length]) {
-        alpha = max(alpha, -search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
+        alpha = max(alpha, - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
         if (beta <= alpha) return beta;
     }
     return alpha;
 }
 
+
 /**
- * 静止探索
+ * 静止探索。その局面の（手番のある側から見た）評価値を返す。_searchから呼ばれる。
  */
-int qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
+int _qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
 {
     assert(alpha < beta);
 
-    if (get_milliseconds() >= time_end) return beta; // 時間切れ
+    if (get_monotonic_ms() >= time_end) return beta; // 時間切れ
     if (depth <= 0) return eval(pos);
 
     alpha = max(alpha, eval(pos));
@@ -844,7 +855,7 @@ int qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
     Move[593] moves;
     int length = pos.generateCaptureMoves(moves);
     foreach (Move move; moves[0..length]) {
-        alpha = max(alpha, -qsearch(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
+        alpha = max(alpha, - _qsearch(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
         if (beta <= alpha) return beta;
     }
     return alpha;
