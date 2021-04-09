@@ -13,7 +13,7 @@
 ## ビルドのしかた
 
 ```
-$ sudo apt install dub
+$ sudo apt install dub llvm-dev
 $ make release
 ```
 

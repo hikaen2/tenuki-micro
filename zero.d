@@ -137,9 +137,10 @@ struct Piece
  */
 struct Position
 {
+    // 0 1  2 3  4 5  6 7  8 9  1011 1213 1415 1617 1819 2021 222324252627282930 313233343536373839
+    // 王玉 飛飛 角角 金金 金金 銀銀 銀銀 桂桂 桂桂 香香 香香 歩歩歩歩歩歩歩歩歩 歩歩歩歩歩歩歩歩歩
     Piece[40] pieces;    // 駒が40枚あるはず
     Color sideToMove;    // 手番
-    int16_t staticValue; // 評価値
 
     /**
      * 任意のアドレスにある駒を返す
@@ -257,8 +258,6 @@ string toCsa(Move m, ref Position pos)
  */
 Position doMove(Position pos, Move m)
 {
-    immutable SCORE = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
-
     // posの中から持ち駒を探して返す
     ref Piece find(ref Position pos, PieceType t) {
         foreach(ref p; pos.pieces) if (p.color == pos.sideToMove && p.type == t && p.address == -1) return p;
@@ -271,13 +270,9 @@ Position doMove(Position pos, Move m)
         } else {
             Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
             if (to != null) {
-                pos.staticValue -= (to.color == Color.BLACK ? SCORE[to.type] : -SCORE[to.type]);
-
                 to.color = pos.sideToMove; // 移動先の駒を自分のものにする
                 to.type = to.type.unpromote; // 成っているかもしれないのを戻す
                 to.address = -1; // 持ち駒にする
-
-                pos.staticValue += (to.color == Color.BLACK ? SCORE[to.type] : -SCORE[to.type]);
             }
 
             Piece* from = pos.lookAt(m.from); // 移動元の駒について
@@ -867,19 +862,28 @@ int _qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
 int eval(ref Position pos)
 {
     //              歩,   香,   桂,   銀,   金,   角,   飛,     王,   と, 成香, 成桂, 成銀,   馬,    龍,
-    immutable T0 = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
-    immutable T1 = [+1, -1,  0];
+    immutable SCORE = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
 
     int sum = 0;
-    foreach (ref p; pos.pieces) sum += T0[p.type] * T1[p.color];
-    return sum * T1[pos.sideToMove];
-}
+    foreach (ref p; pos.pieces) sum += (p.color == Color.BLACK ? SCORE[p.type] : -SCORE[p.type]);
 
-/**
- * 手番のある側から見た評価値を返す。
- */
-int eval2(ref Position pos)
-{
-    immutable T1 = [+1, -1,  0];
-    return pos.staticValue * T1[pos.sideToMove];
+    // 0 1  2 3  4 5  6 7  8 9  1011 1213 1415 1617 1819 2021 222324252627282930 313233343536373839
+    // 王玉 飛飛 角角 金金 金金 銀銀 銀銀 桂桂 桂桂 香香 香香 歩歩歩歩歩歩歩歩歩 歩歩歩歩歩歩歩歩歩
+    if (pos.pieces[0].address == 80) sum += 3;
+    if (pos.pieces[0].address == 71) sum += 3;
+    if (pos.pieces[0].address == 70) sum += 3;
+    if (pos.pieces[0].address == 61) sum += 2;
+    if (pos.pieces[0].address == 62) sum += 2;
+    if (pos.pieces[0].address == 52) sum += 1;
+    if (pos.pieces[0].address == 53) sum += 1;
+
+    if (pos.pieces[1].address == 80 - 80) sum -= 3;
+    if (pos.pieces[1].address == 80 - 71) sum -= 3;
+    if (pos.pieces[1].address == 80 - 70) sum -= 3;
+    if (pos.pieces[1].address == 80 - 61) sum -= 2;
+    if (pos.pieces[1].address == 80 - 62) sum -= 2;
+    if (pos.pieces[1].address == 80 - 52) sum -= 1;
+    if (pos.pieces[1].address == 80 - 53) sum -= 1;
+
+    return pos.sideToMove == Color.BLACK ? sum : -sum;
 }
