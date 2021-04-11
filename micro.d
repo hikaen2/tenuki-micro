@@ -141,6 +141,10 @@ struct Position
     // 王玉 飛飛 角角 金金 金金 銀銀 銀銀 桂桂 桂桂 香香 香香 歩歩歩歩歩歩歩歩歩 歩歩歩歩歩歩歩歩歩
     Piece[40] pieces;    // 駒が40枚あるはず
     Color sideToMove;    // 手番
+    uint64_t boardKey;   // 盤面のハッシュ値
+    uint64_t handKey;    // 持ち駒のハッシュ値
+
+    uint64_t key() { return boardKey + handKey; } // 盤面のハッシュ値と持ち駒のハッシュ値を合わせたハッシュ値
 
     /**
      * 任意のアドレスにある駒を返す
@@ -253,6 +257,34 @@ string toCsa(Move m, ref Position pos)
     return format("%s%02d%02d%s", COLOR[pos.sideToMove], from, to, CSA[t]);
 }
 
+struct Zobrist
+{
+    static immutable uint64_t[14][2][81] PSQ;
+    static immutable uint64_t[8][2] HAND;
+    static immutable uint64_t SIDE = 1;
+
+    shared static this() {
+        Mt19937_64 rng = Mt19937_64(1070372);
+        foreach (ref a; PSQ)  foreach (ref b; a) foreach (ref c; b) rng.popFront(), c = rng.front & ~1UL;
+        foreach (ref a; HAND) foreach (ref b; a)                    rng.popFront(), b = rng.front & ~1UL;
+    }
+}
+
+uint64_t computeBoardKey(ref const Position pos)
+{
+    uint64_t key = 0;
+    foreach (ref p; pos.pieces) if (p.address >= 0)  key ^= Zobrist.PSQ[p.address][p.color][p.type];
+    if (pos.sideToMove == Color.WHITE) key ^= Zobrist.SIDE;
+    return key;
+}
+
+uint64_t computeHandKey(ref const Position pos)
+{
+    uint64_t key = 0;
+    foreach (ref p; pos.pieces) if (p.address == -1) key += Zobrist.HAND[p.color][p.type];
+    return key;
+}
+
 /**
  * 局面にMoveを適用した新しい局面を作って返す（元の局面は変更しない）。
  */
@@ -267,21 +299,30 @@ Position doMove(Position pos, Move m)
     if (m != Move.TORYO && m != Move.NULL) {
         if (m.isDrop) {
             find(pos, m.type).address = m.to; // 持ち駒を打つ
+            pos.handKey -= Zobrist.HAND[pos.sideToMove][m.type];
+            pos.boardKey ^= Zobrist.PSQ[m.to][pos.sideToMove][m.type];
         } else {
             Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
             if (to != null) {
                 assert(to.color != pos.sideToMove); // 移動先の駒は相手方の駒であること
+                pos.boardKey ^= Zobrist.PSQ[to.address][to.color][to.type];
                 to.color = pos.sideToMove; // 移動先の駒を自分のものにする
                 to.type = to.type.unpromote; // 成っているかもしれないのを戻す
                 to.address = -1; // 持ち駒にする
+                pos.handKey += Zobrist.HAND[pos.sideToMove][to.type];
             }
 
             Piece* from = pos.lookAt(m.from); // 移動元の駒について
+            pos.boardKey ^= Zobrist.PSQ[from.address][from.color][from.type];
             from.address = m.to; // 移動先に移動させる
             if (m.isPromote) from.type = from.type.promote; // 成るなら成る
+            pos.boardKey ^= Zobrist.PSQ[from.address][from.color][from.type];
         }
     }
     pos.sideToMove ^= 1; // 手番を変える
+    pos.boardKey ^= Zobrist.SIDE;
+
+    assert(pos.key() == computeBoardKey(pos) + computeHandKey(pos)); // 検算：差分計算したハッシュ値と全計算したハッシュ値が一致すること
     return pos;
 }
 
@@ -560,6 +601,11 @@ Position parsePosition(string sfen)
         }
     }
 
+
+    // ハッシュ
+    pos.boardKey = computeBoardKey(pos);
+    pos.handKey = computeHandKey(pos);
+
     return pos;
 }
 
@@ -599,6 +645,7 @@ string toKi2(ref Position pos)
     }
     s ~= "+---------------------------+\n";
     s ~= format("先手の持駒：%s\n", hand(pos, Color.BLACK));
+    s ~= format("key: %#018x\n", pos.key());
     return s;
 }
 
