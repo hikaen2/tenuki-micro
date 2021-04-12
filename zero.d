@@ -270,6 +270,7 @@ Position doMove(Position pos, Move m)
         } else {
             Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
             if (to != null) {
+                assert(to.color != pos.sideToMove); // 移動先の駒は相手方の駒であること
                 to.color = pos.sideToMove; // 移動先の駒を自分のものにする
                 to.type = to.type.unpromote; // 成っているかもしれないのを戻す
                 to.address = -1; // 持ち駒にする
@@ -861,7 +862,7 @@ int _qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
  */
 int eval(ref Position pos)
 {
-    //              歩,   香,   桂,   銀,   金,   角,   飛,     王,   と, 成香, 成桂, 成銀,   馬,    龍,
+    //                 歩,   香,   桂,   銀,   金,   角,   飛,     王,   と, 成香, 成桂, 成銀,   馬,    龍,
     immutable SCORE = [90,  315,  405,  495,  540,  855,  990,  15000,  540,  540,  540,  540,  945,  1395];
 
     int sum = 0;
