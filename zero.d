@@ -782,6 +782,11 @@ Move search(ref Position pos, uint64_t time_ms)
     return bestMove;
 }
 
+
+enum MAX_VALUE = +30000;
+enum MIN_VALUE = -30000;
+
+
 /**
  * ルート局面用の通常探索。その局面での指し手を返す（簡単のため評価値は返さない）。searchから呼ばれる。
  */
@@ -792,8 +797,9 @@ Move _search0(Position pos, int depth, uint64_t time_end)
     if (length == 0) return Move.NULL;
     randomShuffle(moves[0..length]); // 指し手をシャッフルする
 
-    int alpha = -1000000;
-    int beta = +1000000;
+    int alpha = MIN_VALUE;
+    int beta  = MAX_VALUE;
+
     Move bestMove = Move.NULL;
     foreach (Move move; moves[0..length]) {
         int value = - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end);
@@ -827,11 +833,14 @@ int _search(Position pos, int depth, int alpha, int beta, uint64_t time_end, boo
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return eval(pos);
+
+    int value = MIN_VALUE;
     foreach (Move move; moves[0..length]) {
-        alpha = max(alpha, - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
-        if (beta <= alpha) return beta;
+        value = max(value, - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
+        alpha = max(alpha, value);
+        if (beta <= alpha) break;
     }
-    return alpha;
+    return value;
 }
 
 
@@ -845,16 +854,18 @@ int _qsearch(Position pos, int depth, int alpha, int beta, uint64_t time_end)
     if (get_monotonic_ms() >= time_end) return beta; // 時間切れ
     if (depth <= 0) return eval(pos);
 
-    alpha = max(alpha, eval(pos));
-    if (beta <= alpha) return beta;
+    int value = eval(pos);
+    alpha = max(alpha, value);
+    if (beta <= alpha) return value;
 
     Move[593] moves;
     int length = pos.generateCaptureMoves(moves);
     foreach (Move move; moves[0..length]) {
-        alpha = max(alpha, - _qsearch(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
-        if (beta <= alpha) return beta;
+        value = max(value, - _qsearch(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
+        alpha = max(alpha, value);
+        if (beta <= alpha) break;
     }
-    return alpha;
+    return value;
 }
 
 /**
