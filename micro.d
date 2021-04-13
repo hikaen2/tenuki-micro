@@ -609,6 +609,48 @@ Position parsePosition(string sfen)
     return pos;
 }
 
+/**
+ * SFEN形式の文字列を返す
+ */
+string toSfen(ref Position pos)
+{
+    //   歩,  香,  桂,  銀,  金,  角,  飛,  王,   と, 成香, 成桂, 成銀,   馬,   龍,
+    immutable SFEN = [
+        ["P", "L", "N", "S", "G", "B", "R", "K", "+P", "+L", "+N", "+S", "+B", "+R"],
+        ["p", "l", "n", "s", "g", "b", "r", "k", "+p", "+l", "+n", "+s", "+b", "+r"],
+    ];
+
+    string hand(ref Position pos, Color color)
+    {
+        int[7] num; // 0:歩 1:香 2:桂 3:銀 4:金 5:角 6:飛
+        foreach (Piece p; pos.pieces) if (p.address == -1 && p.color == color) num[p.type] += 1;
+        string s;
+        foreach_reverse (i, n; num) {
+            if (n > 1) s ~= to!string(n);
+            if (n > 0) s ~= SFEN[color][i];
+        }
+        return s;
+    }
+
+    string[] lines;
+    for (int rank = 0; rank <= 8; rank++) {
+        string l;
+        for (int file = 8; file >= 0; file--) {
+            Piece* p = pos.lookAt(cast(Address)(file * 9 + rank));
+            l ~= p == null ? "1" : SFEN[p.color][p.type];
+        }
+        lines ~= l;
+    }
+    string board = lines.join("/");
+    for (int i = 9; i >= 2; i--) board = board.replace("1".replicate(i), to!string(i)); // '1'をまとめる
+    string side = (pos.sideToMove == Color.BLACK ? "b" : "w");
+
+    // 飛車, 角, 金, 銀, 桂, 香, 歩
+    string h = hand(pos, Color.BLACK) ~ hand(pos, Color.WHITE);
+    if (h == "") h = "-";
+    return format("%s %s %s", board, side, h);
+}
+
 /*
  * KI2形式の文字列を返す
  */
@@ -704,6 +746,7 @@ uint64_t get_monotonic_ms()
 
 void bench()
 {
+    writeln(hashfull());
     Position pos0 = parsePosition("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1"); // 指し手生成祭り
 
     //Position pos0 = parsePosition("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
@@ -711,7 +754,7 @@ void bench()
     writeln(pos0.toKi2());
 
 
-    Move m0 = pos0.search(10000);
+    Move m0 = pos0.search(600000);
     writeln(m0.toCsa(pos0));
 
     // Move[100] moves;
@@ -723,13 +766,14 @@ void bench()
 
     // pos0 = pos0.doMove(move);
     //writeln(pos0.toKi2());
-    writeln(COUNT / 1000);
+    writeln(COUNT);
+    writeln(hashfull());
 }
 
 int main(string[] args)
 {
-    // bench();
-    // return 1;
+    bench();
+    return 1;
 
     uint16_t port = 4081;
     try {
@@ -821,7 +865,8 @@ Move search(ref Position pos, uint64_t time_ms)
 
     uint64_t time_end = get_monotonic_ms() + time_ms;
     Move bestMove = Move.TORYO; // 初期値を投了にしておく（合法手がなければ投了になる）
-    for (int depth = 1; get_monotonic_ms() < time_end; depth++) {
+    //for (int depth = 1; get_monotonic_ms() < time_end; depth++) {
+    for (int depth = 1; depth<=6; depth++) {
         Move move = _search0(pos, depth, time_end);
         if (move != Move.NULL && move != Move.TORYO) bestMove = move;
         writefln("%d: %s", depth, move.toCsa(pos));
@@ -842,7 +887,7 @@ Move _search0(Position pos, int depth, uint64_t time_end)
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return Move.NULL;
-    randomShuffle(moves[0..length]); // 指し手をシャッフルする
+    //randomShuffle(moves[0..length]); // 指し手をシャッフルする
 
     int alpha = MIN_VALUE;
     int beta  = MAX_VALUE;
@@ -877,19 +922,34 @@ int _search(Position pos, int depth, int alpha, int beta, uint64_t time_end, boo
 
     if (doNullMove && beta <= - _search(pos.doMove(Move.NULL), depth - 2, -beta, -beta + 1, time_end, false)) return beta;
 
+    TTEntry* tte = probe(pos.key());
+    int16_t lower = tte.key == pos.key() ? tte.lower : MIN_VALUE;
+    int16_t upper = tte.key == pos.key() ? tte.upper : MAX_VALUE;
+    if (tte.key == pos.key() && tte.depth >= depth) {
+        if (beta  <= lower) return lower;
+        if (upper <= alpha) return upper;
+        if (lower == upper) return upper;
+        alpha = max(alpha, lower);
+        beta  = min(beta,  upper);
+    }
+
     Move[593] moves;
     int length = pos.generateMoves(moves);
     if (length == 0) return eval(pos);
 
     int value = MIN_VALUE;
     foreach (Move move; moves[0..length]) {
-        value = max(value, - _search(pos.doMove(move), depth - 1, -beta, -alpha, time_end));
-        alpha = max(alpha, value);
-        if (beta <= alpha) break;
+        value = max(value, - _search(pos.doMove(move), depth - 1, -beta, -max(alpha, value), time_end));
+        //alpha = max(alpha, value);
+        if (beta <= value) break;
     }
+
+    // if (value <= alpha)     tte.save(pos.key(), lower,              cast(int16_t)value, cast(int16_t)depth);
+    // else if (beta <= value) tte.save(pos.key(), cast(int16_t)value, upper,              cast(int16_t)depth);
+    // else                    tte.save(pos.key(), cast(int16_t)value, cast(int16_t)value, cast(int16_t)depth);
+    tte.save(pos.key(), (value <= alpha ? lower : cast(int16_t)value), (beta <= value ? upper : cast(int16_t)value), cast(int16_t)depth);
     return value;
 }
-
 
 /**
  * 静止探索。その局面の（手番のある側から見た）評価値を返す。_searchから呼ばれる。
@@ -945,4 +1005,41 @@ int eval(ref Position pos)
     if (pos.pieces[1].address == 80 - 53) sum -= 1;
 
     return pos.sideToMove == Color.BLACK ? sum : -sum;
+}
+
+struct TTEntry
+{
+    uint64_t key;
+    int16_t  depth;
+    int16_t  lower;
+    int16_t  upper;
+
+    void save(uint64_t key, int16_t lower, int16_t upper, int16_t depth) {
+        if (lower == upper || key != this.key || depth >= this.depth) {
+            this.key = key;
+            this.depth = depth;
+            this.lower = lower;
+            this.upper = upper;
+        }
+    }
+};
+
+enum TT_SIZE = 0x7ffffff; // 1024 MB
+__gshared TTEntry[] TT;
+
+shared static this()
+{
+    TT.length = TT_SIZE + 1;
+}
+
+TTEntry* probe(uint64_t key)
+{
+    return &TT[key & TT_SIZE];
+}
+
+long hashfull()
+{
+    long cnt = 0;
+    foreach (e; TT) cnt += e.key == 0 ? 0 : 1;
+    return cnt * 1000 / (TT_SIZE + 1);
 }
