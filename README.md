@@ -1,8 +1,8 @@
-# 手抜きzero
+# 手抜きmicro
 
 はソースファイル1つのみのCSA将棋エンジンです。
 
-- ソース：zero.d
+- ソース：micro.d
 
 
 ## 開発環境
@@ -21,5 +21,5 @@ $ make release
 ## 実行のしかた
 
 ```
-$ ./zero hostname username password
+$ ./micro hostname username password
 ```

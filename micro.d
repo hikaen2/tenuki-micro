@@ -689,7 +689,7 @@ int main(string[] args)
         getopt(args, "p", &port);
         if (args.length < 4) throw new Exception("");
     } catch (Exception e) {
-        writeln("usage: zero [-p port] hostname username password");
+        writeln("usage: micro [-p port] hostname username password");
         writeln("  -p  default: 4081");
         return 1;
     }
