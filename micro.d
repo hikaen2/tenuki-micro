@@ -141,6 +141,7 @@ struct Position
     // 王玉 飛飛 角角 金金 金金 銀銀 銀銀 桂桂 桂桂 香香 香香 歩歩歩歩歩歩歩歩歩 歩歩歩歩歩歩歩歩歩
     Piece[40] pieces;    // 駒が40枚あるはず
     Color sideToMove;    // 手番
+    uint64_t boardKey;   // 盤面のハッシュ値
 
     /**
      * 任意のアドレスにある駒を返す
@@ -258,29 +259,21 @@ string toCsa(Move m, ref Position pos)
  */
 Position doMove(Position pos, Move m)
 {
-    // posの中から持ち駒を探して返す
-    ref Piece find(ref Position pos, PieceType t) {
-        foreach(ref p; pos.pieces) if (p.color == pos.sideToMove && p.type == t && p.address == -1) return p;
-        throw new Exception(format("not found %s.", t));
-    }
+    if (m == Move.TORYO || m == Move.NULL) throw new Exception("");
 
-    if (m != Move.TORYO && m != Move.NULL) {
-        if (m.isDrop) {
-            find(pos, m.type).address = m.to; // 持ち駒を打つ
-        } else {
-            Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
-            if (to != null) {
-                assert(to.color != pos.sideToMove); // 移動先の駒は相手方の駒であること
-                to.color = pos.sideToMove; // 移動先の駒を自分のものにする
-                to.type = to.type.unpromote; // 成っているかもしれないのを戻す
-                to.address = -1; // 持ち駒にする
-            }
+    if (m.isDrop) throw new Exception("");
 
-            Piece* from = pos.lookAt(m.from); // 移動元の駒について
-            from.address = m.to; // 移動先に移動させる
-            if (m.isPromote) from.type = from.type.promote; // 成るなら成る
-        }
-    }
+    Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
+    if (to != null) throw new Exception("");
+
+    Piece* from = pos.lookAt(m.from); // 移動元の駒について
+    pos.boardKey ^= Zobrist.PSQ[from.address][from.color][from.type];
+    from.address = m.to; // 移動先に移動させる
+    if (m.isPromote) from.type = from.type.promote; // 成るなら成る
+    pos.boardKey ^= Zobrist.PSQ[from.address][from.color][from.type];
+
+
+    assert(pos.boardKey == computeBoardKey(pos)); // 検算：差分計算したハッシュ値と全計算したハッシュ値が一致すること
     return pos;
 }
 
@@ -495,6 +488,8 @@ Position parsePosition(string sfen)
         }
     }
 
+    pos.boardKey = computeBoardKey(pos);
+
     return pos;
 }
 
@@ -577,6 +572,23 @@ string toSfen(ref Position pos)
     string h = hand(pos, Color.BLACK) ~ hand(pos, Color.WHITE);
     if (h == "") h = "-";
     return format("%s %s %s", board, side, h);
+}
+
+struct Zobrist
+{
+    static immutable uint64_t[14][2][81] PSQ;
+
+    shared static this() {
+        Mt19937_64 rng = Mt19937_64(1070372);
+        foreach (ref a; PSQ)  foreach (ref b; a) foreach (ref c; b) rng.popFront(), c = rng.front;
+    }
+}
+
+uint64_t computeBoardKey(ref const Position pos)
+{
+    uint64_t key = 0;
+    foreach (ref p; pos.pieces) if (p.address >= 0)  key ^= Zobrist.PSQ[p.address][p.color][p.type];
+    return key;
 }
 
 int main(string[] args)
