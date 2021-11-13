@@ -373,8 +373,6 @@ immutable RANK_MAX = [
  */
 int generateMoves(ref Position pos, Move[] outMoves)
 {
-    if (pos.pieces[0].address < 0 || pos.pieces[1].address < 0) return 0;
-
     bool[81] occupied = false; // 駒があるか
     foreach (ref p; pos.pieces) {
         if (p.address >= 0) occupied[p.address] = true;
@@ -583,8 +581,8 @@ string toSfen(ref Position pos)
 
 int main(string[] args)
 {
-    Position pos = parsePosition("4k4/9/9/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b rb2g2s2n2l9p");
-    //writeln(pos.toKi2());
+    Position pos = parsePosition("9/9/9/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -");
+    writeln(pos.toKi2());
 
     Move[593] moves;
     int length = pos.generateMoves(moves);
