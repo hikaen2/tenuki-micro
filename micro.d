@@ -35,6 +35,21 @@ alias Address = int8_t;
 
 enum Address SQ11 = 0;
 enum Address SQ99 = 80;
+enum Address SQ98 = 79;
+enum Address SQ88 = 70;
+enum Address SQ78 = 61;
+enum Address SQ68 = 52;
+enum Address SQ58 = 43;
+enum Address SQ48 = 34;
+enum Address SQ38 = 25;
+enum Address SQ28 = 17;
+enum Address SQ18 = 7;
+
+
+Address address(int file, int rank)
+{
+    return cast(byte)((file - 1) * 9 + (rank - 1));
+}
 
 /**
  * アドレスから筋（1〜9）を返す。
@@ -142,6 +157,7 @@ struct Position
     Piece[40] pieces;    // 駒が40枚あるはず
     Color sideToMove;    // 手番
     uint64_t boardKey;   // 盤面のハッシュ値
+    Address[] possibles;
 
     /**
      * 任意のアドレスにある駒を返す
@@ -260,8 +276,9 @@ string toCsa(Move m, ref Position pos)
 Position doMove(Position pos, Move m)
 {
     if (m == Move.TORYO || m == Move.NULL) throw new Exception("");
-
     if (m.isDrop) throw new Exception("");
+
+    pos.possibles.length = 0;
 
     Piece* to = pos.lookAt(m.to); // 移動先に駒があるかを見る
     if (to != null) throw new Exception("");
@@ -272,6 +289,34 @@ Position doMove(Position pos, Move m)
     if (m.isPromote) from.type = from.type.promote; // 成るなら成る
     pos.boardKey ^= Zobrist.PSQ[from.address][from.color][from.type];
 
+    if (from.type == PieceType.ROOK) {
+        int file_from = m.from.file();
+        int rank_from = m.from.rank();
+        int file_to = m.to.file();
+        int rank_to = m.to.rank();
+
+        if (file_from < file_to) {
+            for (int file = file_from; file < file_to; file++) {
+                pos.possibles ~= address(file, rank_to);
+            }
+        } else if (file_from > file_to) {
+            for (int file = file_from; file > file_to; file--) {
+                pos.possibles ~= address(file, rank_to);
+            }
+        } else if (rank_from < rank_to) {
+            for (int rank = rank_from; rank < rank_to; rank++) {
+                pos.possibles ~= address(file_to, rank);
+            }
+        } else if (rank_from > rank_to) {
+            for (int rank = rank_from; rank > rank_to; rank--) {
+                pos.possibles ~= address(file_to, rank);
+            }
+        } else {
+            throw new Exception("");
+        }
+    } else {
+        pos.possibles ~= m.from;
+    }
 
     assert(pos.boardKey == computeBoardKey(pos)); // 検算：差分計算したハッシュ値と全計算したハッシュ値が一致すること
     return pos;
@@ -379,7 +424,7 @@ int generateMoves(ref Position pos, Move[] outMoves)
         for (Direction* d = cast(Direction*)&DIRECTIONS[p.color][p.type][0]; *d != Direction.NULL; d++) {
             for (Address to = cast(Address)(p.address + d.value); !isOverBound(cast(Address)(to - d.value), to) && !occupied[to]; to += d.value) {
                 if (RANK_MIN[p.color][p.type] <= to.rank && to.rank <= RANK_MAX[p.color][p.type]) {
-                    outMoves[length++] = createMove(p.address, to);
+                    if (pos.possibles.canFind(to)) outMoves[length++] = createMove(p.address, to);
                 }
                 if (!d.isFly) break; // 飛び駒でなければここでbreak
             }
@@ -594,12 +639,20 @@ uint64_t computeBoardKey(ref const Position pos)
 int main(string[] args)
 {
     Position pos = parsePosition("9/9/9/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -");
+    pos.possibles ~= SQ98;
+    pos.possibles ~= SQ78;
+    pos.possibles ~= SQ68;
+    pos.possibles ~= SQ58;
+    pos.possibles ~= SQ48;
+    pos.possibles ~= SQ38;
+    pos.possibles ~= SQ18;
+    writeln(pos.possibles);
     writeln(pos.toKi2());
 
     Move[593] moves;
     int length = pos.generateMoves(moves);
 
-    search(pos, 5);
+    search(pos, 7);
     return 0;
 }
 
@@ -607,11 +660,16 @@ void search(Position pos, int depth)
 {
     if (depth <= 0) {
         writeln(pos.toSfen());
+        writeln(pos.toKi2());
         return;
     }
     Move[593] moves;
     int length = pos.generateMoves(moves);
     foreach (Move move; moves[0..length]) {
         search(pos.doMove(move), depth - 1);
+    }
+    if (length <= 0) {
+        //writeln(pos.toSfen());
+        return;
     }
 }
