@@ -154,29 +154,24 @@ struct Position
 
 /**
  * 指し手
- *
- * 1xxxxxxx xxxxxxxx promote
- * x1xxxxxx xxxxxxxx drop
- * xx111111 1xxxxxxx from
- * xxxxxxxx x1111111 to
  */
 struct Move
 {
-    enum Move NULL      = {0};
-    enum Move TORYO     = {0b00111111_11111111};
+    enum Move NULL      = {0, 0, false, false};
+    enum Move TORYO     = {-1, -1, false, false};
 
-    uint16_t i;
-    PieceType type() const { return cast(PieceType)((i >> 7) & 0b01111111); }
-    Address from()   const { return cast(Address)((i >> 7) & 0b01111111); }
-    Address to()     const { return cast(Address)(i & 0b01111111); }
-    bool isPromote() const { return (i & 0b1000000000000000) != 0; }
-    bool isDrop()    const { return (i & 0b0100000000000000) != 0; }
+    Address from; // 移動元のアドレス（ただしisDropのときはPieceTypeを詰める）
+    Address to; // 移動先のアドレス
+    bool isPromote; // 成るか
+    bool isDrop; // 持ち駒を打つか
+
+    PieceType type() const { return cast(PieceType)(from); }
 }
 
 // Moveを作る関数
-Move createMove(Address from, Address to)        { return Move(cast(uint16_t)(from << 7 | to)); }
-Move createMovePromote(Address from, Address to) { return Move(cast(uint16_t)(from << 7 | to | 0b1000000000000000)); }
-Move createMoveDrop(PieceType t, Address to)     { return Move(cast(uint16_t)(t << 7 | to | 0b0100000000000000)); }
+Move createMove(Address from, Address to)        { return Move(from, to, false, false); }
+Move createMovePromote(Address from, Address to) { return Move(from, to, true, false); }
+Move createMoveDrop(PieceType t, Address to)     { return Move(t, to, false, true); }
 
 /**
  * CSA形式の指し手をパースしてMoveを返す。
