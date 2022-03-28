@@ -22,5 +22,5 @@ $ make release
 ## 実行のしかた
 
 ```
-$ ./micro hostname username password
+$ ./micro <hostname> <username> <password>
 ```
