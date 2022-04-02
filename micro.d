@@ -717,25 +717,21 @@ int main(string[] args)
     Position pos = parsePosition("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b -"); // 平手
     writeln(pos.toKi2());
 
-    uint64_t t;
     if (us == Color.BLACK) { // 先手番だったらまず指す
         timeLeft += timeIncrement;
         Move move = pos.search(2900);
-        t = get_monotonic_ms();
         socket.writeLine(move.toCsa(pos));
     }
 
     for (;;) {
         const string line = socket.readLine(); // ソケットから1行読む
         if (line.matchFirst(r"^(\+|-)\d{4}\D{2},T\d+$")) { // （自分か相手の）指し手が来た
-            if (pos.sideToMove == us) writefln("t:%d [ms]", get_monotonic_ms() - t);
             if (pos.sideToMove == us) timeLeft -= to!int(line.matchFirst(r",T(\d+)")[1]); // 自分の指し手だったら使った時間を引く
             pos = pos.doMove(parseMove(line, pos)); // 局面に指し手を適用する（手番が変わる）
             writeln(pos.toKi2());
             if (pos.sideToMove == us) { // 自分の手番になったら指す
                 timeLeft += timeIncrement;
                 Move move = pos.search(2900);
-                t = get_monotonic_ms();
                 socket.writeLine(move.toCsa(pos));
             }
         } else if (line.matchFirst(r"^%TORYO(,T\d+)?$") || line.matchFirst(r"^%KACHI(,T\d+)?$")) {
