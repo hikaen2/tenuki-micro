@@ -141,6 +141,7 @@ struct Position
     // 王玉 飛飛 角角 金金 金金 銀銀 銀銀 桂桂 桂桂 香香 香香 歩歩歩歩歩歩歩歩歩 歩歩歩歩歩歩歩歩歩
     Piece[40] pieces;    // 駒が40枚あるはず
     Color sideToMove;    // 手番
+    uint16_t moveCount = 1;
 
     /**
      * 任意のアドレスにある駒を返す
@@ -277,6 +278,7 @@ Position doMove(Position pos, Move m)
         }
     }
     pos.sideToMove ^= 1; // 手番を変える
+    pos.moveCount++;
     return pos;
 }
 
@@ -599,6 +601,49 @@ string toKi2(ref Position pos)
 
 
 /**
+ * SFEN形式の文字列を返す
+ */
+string toSfen(ref Position pos)
+{
+    //   歩,  香,  桂,  銀,  金,  角,  飛,  王,   と, 成香, 成桂, 成銀,   馬,   龍,
+    immutable SFEN = [
+        ["P", "L", "N", "S", "G", "B", "R", "K", "+P", "+L", "+N", "+S", "+B", "+R"],
+        ["p", "l", "n", "s", "g", "b", "r", "k", "+p", "+l", "+n", "+s", "+b", "+r"],
+    ];
+
+    string hand(ref Position pos, Color color)
+    {
+        int[7] num; // 0:歩 1:香 2:桂 3:銀 4:金 5:角 6:飛
+        foreach (Piece p; pos.pieces) if (p.address == -1 && p.color == color) num[p.type] += 1;
+        string s;
+        foreach_reverse (i, n; num) {
+            if (n > 1) s ~= to!string(n);
+            if (n > 0) s ~= SFEN[color][i];
+        }
+        return s;
+    }
+
+    string[] lines;
+    for (int rank = 0; rank <= 8; rank++) {
+        string l;
+        for (int file = 8; file >= 0; file--) {
+            Piece* p = pos.lookAt(cast(Address)(file * 9 + rank));
+            l ~= p == null ? "1" : SFEN[p.color][p.type];
+        }
+        lines ~= l;
+    }
+    string board = lines.join("/");
+    for (int i = 9; i >= 2; i--) board = board.replace("1".replicate(i), to!string(i)); // '1'をまとめる
+    string side = (pos.sideToMove == Color.BLACK ? "b" : "w");
+
+    // 飛車, 角, 金, 銀, 桂, 香, 歩
+    string h = hand(pos, Color.BLACK) ~ hand(pos, Color.WHITE);
+    if (h == "") h = "-";
+    return format("sfen %s %s %s %s", board, side, h, pos.moveCount);
+}
+
+
+/**
  * ソケットから１行読み込む
  */
 string readLine(ref Socket s)
@@ -767,6 +812,12 @@ Move search(ref Position pos, uint64_t time_ms)
     //     return -15000;
     // }
 
+    // 定跡があれば返す
+    {
+        Move move = pickFromBook(pos);
+        if (move != Move.NULL) return move;
+    }
+
     uint64_t time_end = get_monotonic_ms() + time_ms;
     Move bestMove = Move.TORYO; // 初期値を投了にしておく（合法手がなければ投了になる）
     for (int depth = 1; get_monotonic_ms() < time_end; depth++) {
@@ -893,4 +944,76 @@ int eval(ref Position pos)
     if (pos.pieces[1].address == 80 - 53) sum -= 1;
 
     return pos.sideToMove == Color.BLACK ? sum : -sum;
+}
+
+/*
+ * 定跡
+ */
+import std.string;
+
+immutable Move[][string] BOOK;
+
+shared static this()
+{
+    File f = File("jousekick.txt", "r");
+    scope(exit) f.close();
+
+    string line;
+    string key;
+    while ((line = f.readln()) !is null) {
+        line = line.strip;
+        if (line.matchFirst(r"^#")) {
+            continue;
+        }
+        if (line.matchFirst(r"^sfen ")) {
+            key = line;
+        } else {
+            BOOK[key] ~= parseUsi(line);
+        }
+    }
+}
+
+/*
+ * 7g7f
+ * 8h2b+
+ * G*5b
+ */
+private Move parseUsi(string usi)
+{
+    immutable PieceType[string] TYPE = [
+        "P":PieceType.PAWN, "L":PieceType.LANCE, "N":PieceType.KNIGHT, "S":PieceType.SILVER, "B":PieceType.BISHOP, "R":PieceType.ROOK, "G":PieceType.GOLD,
+    ];
+
+    immutable Address[string] ADDRESS = [
+        "1a": 0, "1b": 1, "1c": 2, "1d": 3, "1e": 4, "1f": 5, "1g": 6, "1h": 7, "1i": 8,
+        "2a": 9, "2b":10, "2c":11, "2d":12, "2e":13, "2f":14, "2g":15, "2h":16, "2i":17,
+        "3a":18, "3b":19, "3c":20, "3d":21, "3e":22, "3f":23, "3g":24, "3h":25, "3i":26,
+        "4a":27, "4b":28, "4c":29, "4d":30, "4e":31, "4f":32, "4g":33, "4h":34, "4i":35,
+        "5a":36, "5b":37, "5c":38, "5d":39, "5e":40, "5f":41, "5g":42, "5h":43, "5i":44,
+        "6a":45, "6b":46, "6c":47, "6d":48, "6e":49, "6f":50, "6g":51, "6h":52, "6i":53,
+        "7a":54, "7b":55, "7c":56, "7d":57, "7e":58, "7f":59, "7g":60, "7h":61, "7i":62,
+        "8a":63, "8b":64, "8c":65, "8d":66, "8e":67, "8f":68, "8g":69, "8h":70, "8i":71,
+        "9a":72, "9b":73, "9c":74, "9d":75, "9e":76, "9f":77, "9g":78, "9h":79, "9i":80,
+    ];
+
+    auto m = usi.matchFirst(r"^(\D)\*(\d\D)");
+    if (!m.empty) {
+        return createMoveDrop(TYPE[m[1]], ADDRESS[m[2]]);
+    }
+
+    m = usi.matchFirst(r"^(\d\D)(\d\D)(\+?)");
+    Address from = ADDRESS[m[1]];
+    Address to = ADDRESS[m[2]];
+    bool promote = (m[3] == "+");
+    return promote ? createMovePromote(from, to) : createMove(from, to);
+}
+
+Move pickFromBook(Position p)
+{
+    string sfen = p.toSfen();
+    writeln(sfen);
+    if (sfen in BOOK) {
+        return BOOK[sfen][ uniform(0, BOOK[sfen].length) ];
+    }
+    return Move.NULL;
 }
