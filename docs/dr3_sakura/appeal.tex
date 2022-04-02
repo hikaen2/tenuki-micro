@@ -1,0 +1,54 @@
+%% lualatex tenuki30
+\nonstopmode
+
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath}
+\usepackage{bm}
+\usepackage{url}
+
+\title{超手抜きについて}
+\author{手抜きチーム\thanks{@hikaen2, @Neakih\_kick}}
+\date{2022年4月2日}
+
+\begin{document}
+
+\maketitle
+
+超手抜き（本名：手抜きmicro）はCSAプロトコルで対局を行うコンピュータ将棋プログラムです。開発者らが将棋プログラムの仕組みを理解するために作っています。
+
+簡単のためソース1ファイルのみ、αβ探索、駒得のみの評価としています。
+
+リポジトリ：\url{https://github.com/hikaen2/tenuki-micro}
+
+
+\section*{本大会における手抜きポイント}
+
+
+struct Move（指し手）を16ビットにパックするのをやめました\footnote{\url{https://github.com/hikaen2/tenuki-micro/commit/900fcecbd310239148998aae43bb1b2261090918}}。
+すなわち、
+
+\noindent 変更前（疑似コード）：
+
+\begin{verbatim}
+struct Move {
+  uint16_t i; // 移動元と移動先と成るかどうかと持ち駒を打つかどうか
+}
+\end{verbatim}
+
+
+\noindent 変更後（疑似コード）：
+
+\begin{verbatim}
+struct Move {
+  uint8_t from;   // 移動元
+  uint8_t to;     // 移動先
+  bool isPromote; // 成るか
+  bool isDrop;    // 持ち駒を打つか
+}
+\end{verbatim}
+
+これによりソースが簡単になりました。
+そのかわりに弱くなっている可能性があります。
+
+
+\end{document}
