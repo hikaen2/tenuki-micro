@@ -31,15 +31,15 @@ import std.typecons;
  * -1: 持ち駒
  * -2: 駒箱
  */
-alias Address = int8_t;
+alias address_t = int8_t;
 
-enum Address SQ11 = 0;
-enum Address SQ99 = 80;
+enum address_t SQ11 = 0;
+enum address_t SQ99 = 80;
 
 /**
  * アドレスから筋（1〜9）を返す。
  */
-int file(Address a)
+int file(address_t a)
 {
     immutable T = [
         1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -58,7 +58,7 @@ int file(Address a)
 /**
  * アドレスから段（1〜9）を返す。
  */
-int rank(Address a)
+int rank(address_t a)
 {
     immutable T = [
         1, 2, 3, 4, 5, 6, 7, 8, 9,
@@ -129,7 +129,7 @@ struct Piece
 {
     Color color;
     PieceType type;
-    Address address;
+    address_t address;
 }
 
 /**
@@ -145,7 +145,7 @@ struct Position
     /**
      * 任意のアドレスにある駒を返す
      */
-    Piece* lookAt(Address address)
+    Piece* lookAt(address_t address)
     {
         foreach(ref p; this.pieces) if (p.address == address) return &p;
         return null; // 見つからなかったらnullを返す
@@ -160,8 +160,8 @@ struct Move
     enum Move NULL      = {0, 0, false, false};
     enum Move TORYO     = {-1, -1, false, false};
 
-    Address from; // 移動元のアドレス（ただしisDropのときはPieceTypeを詰める）
-    Address to; // 移動先のアドレス
+    address_t from; // 移動元のアドレス（ただしisDropのときはPieceTypeを詰める）
+    address_t to; // 移動先のアドレス
     bool isPromote; // 成るか
     bool isDrop; // 持ち駒を打つか
 
@@ -169,9 +169,9 @@ struct Move
 }
 
 // Moveを作る関数
-Move createMove(Address from, Address to)        { return Move(from, to, false, false); }
-Move createMovePromote(Address from, Address to) { return Move(from, to, true, false); }
-Move createMoveDrop(PieceType t, Address to)     { return Move(t, to, false, true); }
+Move createMove(address_t from, address_t to)        { return Move(from, to, false, false); }
+Move createMovePromote(address_t from, address_t to) { return Move(from, to, true, false); }
+Move createMoveDrop(PieceType t, address_t to)       { return Move(t, to, false, true); }
 
 /**
  * CSA形式の指し手をパースしてMoveを返す。
@@ -195,7 +195,7 @@ Move parseMove(string s, ref Position pos)
         "RY": PieceType.DRAGON,
     ];
 
-    immutable Address[] ADDRESS = [
+    immutable address_t[] ADDRESS = [
          -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
          -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,
          -1,  9, 10, 11, 12, 13, 14, 15, 16, 17,
@@ -209,8 +209,8 @@ Move parseMove(string s, ref Position pos)
     ];
 
     auto m = s.matchFirst(r"(-|\+)(\d{2})(\d{2})(\w{2})");
-    Address from = ADDRESS[to!int(m[2])];
-    Address to = ADDRESS[to!int(m[3])];
+    address_t from = ADDRESS[to!int(m[2])];
+    address_t to = ADDRESS[to!int(m[3])];
     PieceType t = DIC[m[4]];
 
     if (from == -1) return createMoveDrop(t, to); // fromが0なら駒打ち
@@ -349,7 +349,7 @@ struct Direction {
 
     int8_t i;
     bool isFly() const { return (i & 1) != 0; }
-    Address  value() const { return i >> 1; }
+    address_t  value() const { return i >> 1; }
 }
 
 immutable RANK_MIN = [
@@ -383,7 +383,7 @@ int generateCaptureMoves(ref Position pos, Move[] outMoves)
     foreach (ref p; pos.pieces) {
         if (p.color != pos.sideToMove || p.address < 0) continue;
         for (Direction* d = cast(Direction*)&DIRECTIONS[p.color][p.type][0]; *d != Direction.NULL; d++) {
-            for (Address to = cast(Address)(p.address + d.value); !isOverBound(cast(Address)(to - d.value), to) && !f_occupied[to]; to += d.value) {
+            for (address_t to = cast(address_t)(p.address + d.value); !isOverBound(cast(address_t)(to - d.value), to) && !f_occupied[to]; to += d.value) {
                 if (e_occupied[to]) {
                     if (canPromote(p, p.address, to)) {
                         outMoves[length++] = createMovePromote(p.address, to);
@@ -423,7 +423,7 @@ int generateMoves(ref Position pos, Move[] outMoves)
     foreach (ref p; pos.pieces) {
         if (p.color != pos.sideToMove || p.address < 0) continue;
         for (Direction* d = cast(Direction*)&DIRECTIONS[p.color][p.type][0]; *d != Direction.NULL; d++) {
-            for (Address to = cast(Address)(p.address + d.value); !isOverBound(cast(Address)(to - d.value), to) && !occupied[to]; to += d.value) {
+            for (address_t to = cast(address_t)(p.address + d.value); !isOverBound(cast(address_t)(to - d.value), to) && !occupied[to]; to += d.value) {
                 if (canPromote(p, p.address, to)) {
                     outMoves[length++] = createMovePromote(p.address, to);
                     if (p.type == PieceType.SILVER || ((to.rank == 3 || to.rank == 7) && (p.type == PieceType.LANCE || p.type == PieceType.KNIGHT))) {
@@ -438,7 +438,7 @@ int generateMoves(ref Position pos, Move[] outMoves)
     }
 
     // 持ち駒を打つ
-    for (Address to = SQ11; to <= SQ99; to++) {
+    for (address_t to = SQ11; to <= SQ99; to++) {
         if (occupied[to]) continue;
         for (PieceType t = (pawned[to.file] ? PieceType.LANCE : PieceType.PAWN); t <= PieceType.ROOK ; t++) {
             if (hand[t] && to.rank >= RANK_MIN[pos.sideToMove][t] && RANK_MAX[pos.sideToMove][t] >= to.rank) {
@@ -450,12 +450,12 @@ int generateMoves(ref Position pos, Move[] outMoves)
     return length;
 }
 
-bool isOverBound(Address from, Address to)
+bool isOverBound(address_t from, address_t to)
 {
     return to < SQ11 || SQ99 < to || (from.rank == 1 && to.rank == 9) || (from.rank == 9 && to.rank == 1);
 }
 
-bool canPromote(ref Piece p, Address from, Address to)
+bool canPromote(ref Piece p, address_t from, address_t to)
 {
     return p.type.isPromotable && (p.color == Color.BLACK ? (from.rank <= 3 || to.rank <= 3) : (from.rank >= 7 || to.rank >= 7));
 }
@@ -534,7 +534,7 @@ Position parsePosition(string sfen)
             if (s != "1") {
                 enforce(s in COLOR_AND_TYPE, format("parsePosition: invalid piece '%s' in board state '%s'.", s, boardState)); // COLOR_AND_TYPEになければエラー
                 auto t = COLOR_AND_TYPE[s];
-                find(pos, t[0], unpromote(t[1])) = Piece(t[0], t[1], cast(Address)(file * 9 + rank));
+                find(pos, t[0], unpromote(t[1])) = Piece(t[0], t[1], cast(address_t)(file * 9 + rank));
             }
             m.popFront();
         }
@@ -587,7 +587,7 @@ string toKi2(ref Position pos)
     for (int rank = 0; rank <= 8; rank++) {
         s ~= "|";
         for (int file = 8; file >= 0; file--) {
-            Piece* p = pos.lookAt(cast(Address)(file * 9 + rank));
+            Piece* p = pos.lookAt(cast(address_t)(file * 9 + rank));
             s ~= (p == null) ? (" ・") : (COLOR_STR[p.color] ~ TYPE_STR[p.type]);
         }
         s ~= format("|%s\n", NUM_STR[rank + 1]);
